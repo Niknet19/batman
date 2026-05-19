@@ -517,62 +517,102 @@ void batadv_v_elp_primary_iface_set(struct batadv_hard_iface *primary_iface) {
 static void batadv_v_elp_neigh_update(struct batadv_priv *bat_priv,
                                       u8 *neigh_addr,
                                       struct batadv_hard_iface *if_incoming,
-                                      struct batadv_elp_packet *elp_packet)
-
-{
+                                      struct batadv_elp_packet *elp_packet) {
   struct batadv_neigh_node *neigh;
   struct batadv_orig_node *orig_neigh;
   struct batadv_hardif_neigh_node *hardif_neigh;
   s32 seqno_diff;
   s32 elp_latest_seqno;
 
+  pr_err("=== AIRTIME DEBUG: neigh_update for %pM via %s ===\n", neigh_addr,
+         if_incoming->net_dev->name);
+
   orig_neigh = batadv_v_ogm_orig_get(bat_priv, elp_packet->orig);
-  if (!orig_neigh)
+  if (!orig_neigh) {
+    pr_err("=== AIRTIME DEBUG: FAILED to get/create orig for %pM ===\n",
+           elp_packet->orig);
     return;
+  }
+  pr_err("=== AIRTIME DEBUG: orig_node for %pM OK ===\n", elp_packet->orig);
 
   neigh = batadv_neigh_node_get_or_create(orig_neigh, if_incoming, neigh_addr);
-  if (!neigh)
+  if (!neigh) {
+    pr_err("=== AIRTIME DEBUG: FAILED to get/create neigh for %pM ===\n",
+           neigh_addr);
     goto orig_free;
+  }
+  pr_err("=== AIRTIME DEBUG: neigh_node for %pM OK ===\n", neigh_addr);
 
   hardif_neigh = batadv_hardif_neigh_get(if_incoming, neigh_addr);
-  if (!hardif_neigh)
+  if (!hardif_neigh) {
+    pr_err("=== AIRTIME DEBUG: FAILED to get hardif_neigh for %pM! "
+           "Neighbor not in hardif_neigh list yet? ===\n",
+           neigh_addr);
+    pr_err("=== AIRTIME DEBUG: This means ELP probe didn't create hardif_neigh "
+           "===\n");
     goto neigh_free;
+  }
+  pr_err("=== AIRTIME DEBUG: hardif_neigh found, airtime_cost=%u ===\n",
+         hardif_neigh->bat_v.airtime_cost);
 
   {
     u32 new_seqno = ntohl(elp_packet->seqno);
     s32 gap;
 
+    pr_err("=== AIRTIME DEBUG: seqno: new=%u, last=%u ===\n", new_seqno,
+           hardif_neigh->bat_v.elp_last_seqno);
+
     /* если это не первый пакет от соседа — считаем разрыв */
     if (hardif_neigh->bat_v.elp_last_seqno > 0) {
       gap = (s32)(new_seqno - hardif_neigh->bat_v.elp_last_seqno) - 1;
       if (gap < 0)
-        gap = 0;     /* переполнение seqno или перезапуск */
-      if (gap > 100) /* разумный предел, чтобы не ломать статистику */
-        gap = 0;     /* считаем что был перезапуск */
+        gap = 0;
+      if (gap > 100)
+        gap = 0;
+
+      pr_err("=== AIRTIME DEBUG: gap=%d, elp_expected was %u, elp_received was "
+             "%u ===\n",
+             gap, hardif_neigh->bat_v.elp_expected,
+             hardif_neigh->bat_v.elp_received);
 
       hardif_neigh->bat_v.elp_expected += 1 + gap;
       hardif_neigh->bat_v.elp_received += 1;
     } else {
-      /* первый пакет — инициализируем счётчики */
+      pr_err("=== AIRTIME DEBUG: first ELP from this neighbor ===\n");
       hardif_neigh->bat_v.elp_expected = 1;
       hardif_neigh->bat_v.elp_received = 1;
     }
     hardif_neigh->bat_v.elp_last_seqno = new_seqno;
+
+    pr_err("=== AIRTIME DEBUG: updated: expected=%u, received=%u ===\n",
+           hardif_neigh->bat_v.elp_expected, hardif_neigh->bat_v.elp_received);
   }
 
   elp_latest_seqno = hardif_neigh->bat_v.elp_latest_seqno;
   seqno_diff = ntohl(elp_packet->seqno) - elp_latest_seqno;
 
+  pr_err("=== AIRTIME DEBUG: seqno_diff=%d (new=%u, latest=%u) ===\n",
+         seqno_diff, ntohl(elp_packet->seqno), elp_latest_seqno);
+
   /* known or older sequence numbers are ignored. However always adopt
    * if the router seems to have been restarted.
    */
-  if (seqno_diff < 1 && seqno_diff > -BATADV_ELP_MAX_AGE)
+  if (seqno_diff < 1 && seqno_diff > -BATADV_ELP_MAX_AGE) {
+    pr_err("=== AIRTIME DEBUG: OLD seqno, ignoring (diff=%d, max_age=%d) ===\n",
+           seqno_diff, BATADV_ELP_MAX_AGE);
     goto hardif_free;
+  }
+
+  pr_err("=== AIRTIME DEBUG: seqno is NEW, updating neighbor ===\n");
 
   neigh->last_seen = jiffies;
   hardif_neigh->last_seen = jiffies;
   hardif_neigh->bat_v.elp_latest_seqno = ntohl(elp_packet->seqno);
   hardif_neigh->bat_v.elp_interval = ntohl(elp_packet->elp_interval);
+
+  pr_err("=== AIRTIME DEBUG: neighbor updated: last_seen=%lu, elp_interval=%u "
+         "===\n",
+         hardif_neigh->last_seen, hardif_neigh->bat_v.elp_interval);
 
 hardif_free:
   batadv_hardif_neigh_put(hardif_neigh);
@@ -580,16 +620,9 @@ neigh_free:
   batadv_neigh_node_put(neigh);
 orig_free:
   batadv_orig_node_put(orig_neigh);
+  pr_err("=== AIRTIME DEBUG: neigh_update FINISHED ===\n");
 }
 
-/**
- * batadv_v_elp_packet_recv() - main ELP packet handler
- * @skb: the received packet
- * @if_incoming: the interface this packet was received through
- *
- * Return: NET_RX_SUCCESS and consumes the skb if the packet was properly
- * processed or NET_RX_DROP in case of failure.
- */
 int batadv_v_elp_packet_recv(struct sk_buff *skb,
                              struct batadv_hard_iface *if_incoming) {
   struct batadv_priv *bat_priv = netdev_priv(if_incoming->mesh_iface);
@@ -599,37 +632,62 @@ int batadv_v_elp_packet_recv(struct sk_buff *skb,
   bool res;
   int ret = NET_RX_DROP;
 
+  pr_err("=== AIRTIME DEBUG: ELP RECEIVED on %s ===\n",
+         if_incoming->net_dev->name);
+
   res = batadv_check_management_packet(skb, if_incoming, BATADV_ELP_HLEN);
-  if (!res)
+  if (!res) {
+    pr_err("=== AIRTIME DEBUG: ELP check_management_packet FAILED ===\n");
     goto free_skb;
+  }
+  pr_err("=== AIRTIME DEBUG: ELP check_management_packet OK ===\n");
 
   ethhdr = eth_hdr(skb);
-  if (batadv_is_my_mac(bat_priv, ethhdr->h_source))
+
+  pr_err("=== AIRTIME DEBUG: ELP from %pM to %pM ===\n", ethhdr->h_source,
+         ethhdr->h_dest);
+
+  if (batadv_is_my_mac(bat_priv, ethhdr->h_source)) {
+    pr_err("=== AIRTIME DEBUG: ELP is my own MAC, dropping ===\n");
     goto free_skb;
+  }
 
   /* did we receive a B.A.T.M.A.N. V ELP packet on an interface
    * that does not have B.A.T.M.A.N. V ELP enabled ?
    */
-  if (strcmp(bat_priv->algo_ops->name, "BATMAN_V") != 0)
+  if (strcmp(bat_priv->algo_ops->name, "BATMAN_V") != 0) {
+    pr_err("=== AIRTIME DEBUG: algo is NOT BATMAN_V (got '%s'), dropping ===\n",
+           bat_priv->algo_ops->name);
     goto free_skb;
+  }
+  pr_err("=== AIRTIME DEBUG: algo is BATMAN_V, OK ===\n");
 
   elp_packet = (struct batadv_elp_packet *)skb->data;
 
-  batadv_dbg(BATADV_DBG_BATMAN, bat_priv,
-             "Received ELP packet from %pM seqno %u ORIG: %pM\n",
-             ethhdr->h_source, ntohl(elp_packet->seqno), elp_packet->orig);
+  pr_err("=== AIRTIME DEBUG: ELP packet: seqno=%u, elp_interval=%u, orig=%pM "
+         "===\n",
+         ntohl(elp_packet->seqno), ntohl(elp_packet->elp_interval),
+         elp_packet->orig);
 
   primary_if = batadv_primary_if_get_selected(bat_priv);
-  if (!primary_if)
+  if (!primary_if) {
+    pr_err("=== AIRTIME DEBUG: NO PRIMARY IF, dropping ELP! ===\n");
     goto free_skb;
+  }
+  pr_err("=== AIRTIME DEBUG: primary_if=%s ===\n", primary_if->net_dev->name);
 
+  pr_err("=== AIRTIME DEBUG: calling batadv_v_elp_neigh_update ===\n");
   batadv_v_elp_neigh_update(bat_priv, ethhdr->h_source, if_incoming,
                             elp_packet);
+  pr_err("=== AIRTIME DEBUG: neigh_update returned ===\n");
 
   ret = NET_RX_SUCCESS;
   batadv_hardif_put(primary_if);
 
 free_skb:
+  pr_err("=== AIRTIME DEBUG: ELP packet %s (ret=%d) ===\n",
+         ret == NET_RX_SUCCESS ? "ACCEPTED" : "DROPPED", ret);
+
   if (ret == NET_RX_SUCCESS)
     consume_skb(skb);
   else
