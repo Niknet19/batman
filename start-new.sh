@@ -1,15 +1,17 @@
 #!/bin/bash
-sleep 15
+sleep 5
 
 # Конфигурация (из файлов или по умолчанию)
 ROLE=$(cat /etc/mesh/role 2>/dev/null || echo "bridge")
 CHANNEL=$(cat /etc/mesh/channel 2>/dev/null || echo "8")
 ESSID=$(cat /etc/mesh/essid 2>/dev/null || echo "MyMesh")
 FREQ=$(cat /etc/mesh/freq 2>/dev/null || echo "2447")
-IP_ADDR=$(cat /etc/mesh/ip 2>/dev/null || echo "10.0.0.3")
+IP_ADDR=$(cat /etc/mesh/ip 2>/dev/null || echo "10.0.0.5")
 GW=$(cat /etc/mesh/gateway 2>/dev/null || echo "10.0.0.1")
 
-
+# Установка пакетов (hostapd не нужен для mesh-клиента, но оставим на всякий случай)
+#sudo apt-get update -qq
+#sudo apt-get install -y bridge-utils
 
 # Разблокировка Wi-Fi и остановка мешающих служб
 sudo rfkill unblock wifi
@@ -74,3 +76,12 @@ sudo batctl -m bat0 o
 echo ""
 echo "Логи batman:"
 sudo batctl -m bat0 log 2>/dev/null || echo "Логи недоступны"
+
+# Сохраняем конфигурацию для следующих запусков
+#sudo mkdir -p /etc/mesh
+#echo "$ROLE" | sudo tee /etc/mesh/role
+#echo "$CHANNEL" | sudo tee /etc/mesh/channel
+#echo "$ESSID" | sudo tee /etc/mesh/essid
+#echo "$FREQ" | sudo tee /etc/mesh/freq
+#echo "$IP_ADDR" | sudo tee /etc/mesh/ip
+#echo "$GW" | sudo tee /etc/mesh/gateway
