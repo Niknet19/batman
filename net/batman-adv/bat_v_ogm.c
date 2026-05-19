@@ -644,7 +644,8 @@ static int batadv_v_ogm_metric_update(struct batadv_priv *bat_priv,
     }
 
     /* airtime пути = airtime из OGM + airtime линка (сложение!) */
-    path_airtime = ntohl(ogm2->throughput) + link_airtime;
+    // path_airtime = ntohl(ogm2->throughput) + link_airtime;
+    path_airtime = ntohl(ogm2->throughput);
 
     /* применяем штрафы */
     path_airtime = batadv_v_forward_penalty(bat_priv, if_incoming, if_outgoing,
