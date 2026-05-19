@@ -292,6 +292,10 @@ static void batadv_v_ogm_send_meshif(struct batadv_priv *bat_priv) {
   atomic_inc(&bat_priv->bat_v.ogm_seqno);
   ogm_packet->tvlv_len = htons(tvlv_len);
 
+  pr_err("=== AIRTIME DEBUG: OWN OGM: seqno=%u, airtime=%u (0x%x) ===\n",
+         ntohl(ogm_packet->seqno), ntohl(ogm_packet->throughput),
+         ntohl(ogm_packet->throughput));
+
   /* broadcast on every interface */
   rcu_read_lock();
   netdev_for_each_lower_private_rcu(bat_priv->mesh_iface, hard_iface, iter) {
@@ -1052,7 +1056,8 @@ int batadv_v_ogm_init(struct batadv_priv *bat_priv) {
   ogm_packet->version = BATADV_COMPAT_VERSION;
   ogm_packet->ttl = BATADV_TTL;
   ogm_packet->flags = BATADV_NO_FLAGS;
-  ogm_packet->throughput = htonl(BATADV_THROUGHPUT_MAX_VALUE);
+  // ogm_packet->throughput = htonl(BATADV_THROUGHPUT_MAX_VALUE);
+  ogm_packet->throughput = htonl(0);
 
   /* randomize initial seqno to avoid collision */
   get_random_bytes(&random_seqno, sizeof(random_seqno));
