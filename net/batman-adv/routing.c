@@ -172,27 +172,32 @@ bool batadv_check_management_packet(struct sk_buff *skb,
                                     int header_len) {
   struct ethhdr *ethhdr;
 
-  /* drop packet if it has not necessary minimum size */
-  if (unlikely(!pskb_may_pull(skb, header_len)))
+  if (unlikely(!pskb_may_pull(skb, header_len))) {
+    pr_err("=== CHECK: pskb_may_pull FAILED ===\n");
     return false;
+  }
 
   ethhdr = eth_hdr(skb);
 
-  /* packet with broadcast indication but unicast recipient */
-  if (!is_broadcast_ether_addr(ethhdr->h_dest))
+  if (!is_broadcast_ether_addr(ethhdr->h_dest)) {
+    pr_err("=== CHECK: dest=%pM is NOT broadcast ===\n", ethhdr->h_dest);
     return false;
+  }
 
-  /* packet with invalid sender address */
-  if (!is_valid_ether_addr(ethhdr->h_source))
+  if (!is_valid_ether_addr(ethhdr->h_source)) {
+    pr_err("=== CHECK: source=%pM is NOT valid ===\n", ethhdr->h_source);
     return false;
+  }
 
-  /* create a copy of the skb, if needed, to modify it. */
-  if (skb_cow(skb, 0) < 0)
+  if (skb_cow(skb, 0) < 0) {
+    pr_err("=== CHECK: skb_cow FAILED ===\n");
     return false;
+  }
 
-  /* keep skb linear */
-  if (skb_linearize(skb) < 0)
+  if (skb_linearize(skb) < 0) {
+    pr_err("=== CHECK: skb_linearize FAILED ===\n");
     return false;
+  }
 
   return true;
 }
