@@ -1,5 +1,5 @@
 #!/bin/bash
-sleep 5
+sleep 2
 
 # Конфигурация (из файлов или по умолчанию)
 ROLE=$(cat /etc/mesh/role 2>/dev/null || echo "bridge")
@@ -25,6 +25,7 @@ sudo pkill -9 wpa_supplicant 2>/dev/null || true
 sudo modprobe batman-adv
 sleep 2
 
+sudo batctl routing_algo BATMAN_V
 # Настройка wlan0 в режим IBSS на НУЖНОЙ ЧАСТОТЕ
 sudo ip link set wlan0 down
 sudo iwconfig wlan0 mode ad-hoc
