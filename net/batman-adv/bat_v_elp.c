@@ -175,6 +175,12 @@ calculate:
   else
     *base_airtime = BATADV_AIRTIME_MAX_VALUE;
 
+  pr_err("=== AIRTIME BASE: bitrate=%u, overhead=%u, frame_part=%llu, "
+         "base_airtime=%u ===\n",
+         bitrate, BATADV_AIRTIME_OVERHEAD,
+         (BATADV_AIRTIME_TEST_FRAME_SIZE * 1000000ULL) / bitrate,
+         *base_airtime);
+
   return true;
 }
 
@@ -218,6 +224,12 @@ batadv_v_elp_airtime_metric_update(struct batadv_hardif_neigh_node *neigh) {
   } else {
     neigh->bat_v.airtime_cost = BATADV_AIRTIME_MAX_VALUE;
   }
+  pr_err(
+      "=== AIRTIME METRIC: neighbor=%pM, base=%u, e_pt_raw=%u, e_pt_smooth=%u, "
+      "received=%u, expected=%u, final_airtime=%u ===\n",
+      neigh->addr, base_airtime, e_pt, neigh->bat_v.e_pt_smoothed,
+      neigh->bat_v.elp_received, neigh->bat_v.elp_expected,
+      neigh->bat_v.airtime_cost);
 }
 
 /**

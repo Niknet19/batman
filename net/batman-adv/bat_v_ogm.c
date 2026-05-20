@@ -651,6 +651,14 @@ static int batadv_v_ogm_metric_update(struct batadv_priv *bat_priv,
     path_airtime = batadv_v_forward_penalty(bat_priv, if_incoming, if_outgoing,
                                             path_airtime);
 
+    pr_err("=== AIRTIME SAVE: path_before_penalty=%u, path_after_penalty=%u, "
+           "if_in=%s, if_out=%s, same_iface=%d, full_duplex=%d ===\n",
+           ntohl(ogm2->throughput), path_airtime, if_incoming->net_dev->name,
+           if_outgoing == BATADV_IF_DEFAULT ? "default"
+                                            : if_outgoing->net_dev->name,
+           if_incoming == if_outgoing,
+           !!(if_incoming->bat_v.flags & BATADV_FULL_DUPLEX));
+
     /* сохраняем в neigh_ifinfo */
     neigh_ifinfo->bat_v.airtime_cost = path_airtime;
   }
@@ -920,6 +928,9 @@ static void batadv_v_ogm_process(const struct sk_buff *skb, int ogm_offset,
   /* защита от переполнения */
   if (path_airtime < ogm_airtime) /* overflow */
     path_airtime = BATADV_AIRTIME_MAX_VALUE;
+
+  pr_err("=== AIRTIME OGM: ogm_from_src=%u, link_airtime=%u, NEW_path=%u ===\n",
+         ogm_airtime, link_airtime, path_airtime);
 
   /* AIRTIME: записываем новую стоимость пути в пакет для дальнейшей
    * ретрансляции */
