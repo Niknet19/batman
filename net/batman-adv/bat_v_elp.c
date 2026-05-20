@@ -127,12 +127,12 @@ batadv_v_elp_airtime_get_base(struct batadv_hardif_neigh_node *neigh,
       goto default_airtime;
 
     if (sinfo.filled & BIT(NL80211_STA_INFO_EXPECTED_THROUGHPUT)) {
-      bitrate = sinfo.expected_throughput;
+      bitrate = sinfo.expected_throughput * 1000;
       goto calculate;
     }
 
     if (sinfo.filled & BIT(NL80211_STA_INFO_TX_BITRATE)) {
-      bitrate = cfg80211_calculate_bitrate(&sinfo.txrate);
+      bitrate = cfg80211_calculate_bitrate(&sinfo.txrate) * 100000;
       goto calculate;
     }
 
