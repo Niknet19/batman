@@ -1,6 +1,25 @@
 #!/bin/bash
 sleep 2
 
+# === НОВОЕ: Парсинг параметров командной строки ===
+ROUTING_ALGO="BATMAN_V"  # Значение по умолчанию
+
+# Проверяем первый аргумент скрипта
+if [ "$1" = "IV" ] || [ "$1" = "4" ] || [ "$1" = "BATMAN_IV" ]; then
+    ROUTING_ALGO="BATMAN_IV"
+elif [ "$1" = "V" ] || [ "$1" = "5" ] || [ "$1" = "BATMAN_V" ]; then
+    ROUTING_ALGO="BATMAN_V"
+elif [ -n "$1" ]; then
+    echo "Неизвестный параметр: $1"
+    echo "Использование: $0 [IV|V|BATMAN_IV|BATMAN_V|4|5]"
+    echo "  Примеры:"
+    echo "    $0 IV     - BATMAN_IV"
+    echo "    $0 V      - BATMAN_V"
+    echo "    $0 4      - BATMAN_IV"
+    echo "    $0 5      - BATMAN_V"
+    exit 1
+fi
+
 # Конфигурация (из файлов или по умолчанию)
 ROLE=$(cat /etc/mesh/role 2>/dev/null || echo "bridge")
 CHANNEL=$(cat /etc/mesh/channel 2>/dev/null || echo "8")
@@ -25,7 +44,10 @@ sudo pkill -9 wpa_supplicant 2>/dev/null || true
 sudo modprobe batman-adv
 sleep 2
 
-sudo batctl routing_algo BATMAN_V
+# === ИЗМЕНЕНО: Устанавливаем выбранный алгоритм ===
+sudo batctl routing_algo $ROUTING_ALGO
+echo "Используется алгоритм: $ROUTING_ALGO"
+
 # Настройка wlan0 в режим IBSS на НУЖНОЙ ЧАСТОТЕ
 sudo ip link set wlan0 down
 sudo iwconfig wlan0 mode ad-hoc
@@ -44,9 +66,9 @@ echo "Запрошенная частота: $FREQ МГц, фактическа�
 sudo batctl meshif bat0 create 2>/dev/null || sudo ip link add name bat0 type batadv
 sudo batctl meshif bat0 interface add wlan0 2>/dev/null || sudo ip link set dev wlan0 master bat0
 
-# Устанавливаем BATMAN_V
-sudo batctl -m bat0 routing_algo BATMAN_V
-echo "Алгоритм маршрутизации: $(sudo batctl -m bat0 routing_algo)"
+# === ИЗМЕНЕНО: Устанавливаем алгоритм для bat0 ===
+sudo batctl -m bat0 routing_algo $ROUTING_ALGO
+echo "Алгоритм маршрутизации для bat0: $(sudo batctl -m bat0 routing_algo)"
 
 # Настройка bat0
 sudo ip link set bat0 up

@@ -29,6 +29,7 @@ RM ?= rm -f
 CP := cp -fpR
 LN := ln -sf
 DEPMOD := depmod -a
+MODULE_DIR := /lib/modules/$(shell uname -r)/kernel/net/batman-adv
 
 REVISION= $(shell	if [ -d "$(PWD)/.git" ]; then \
 				echo $$(git --git-dir="$(PWD)/.git" describe --always --dirty --match "v*" |sed 's/^v//' 2> /dev/null || echo "[unknown]"); \
@@ -71,8 +72,15 @@ clean:
 install: config
 	$(MAKE) -C $(KERNELPATH) $(BUILD_FLAGS) modules_install
 	$(DEPMOD)
+install-local: all
+	@echo "=== Ручная установка модуля batman-adv.ko ==="
+	@echo "Целевая директория: $(MODULE_DIR)"
+	@$(MKDIR) -p $(MODULE_DIR)
+	@$(CP) $(PWD)/net/batman-adv/batman-adv.ko $(MODULE_DIR)/
+	@$(DEPMOD)
+	@echo "=== Готово ==="
 
 config:
 	$(PWD)/gen-compat-autoconf.sh $(PWD)/compat-autoconf.h
 
-.PHONY: all clean install config
+.PHONY: all clean install config install-local
