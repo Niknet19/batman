@@ -943,6 +943,11 @@ struct batadv_orig_node *batadv_orig_node_new(struct batadv_priv *bat_priv,
   reset_time = jiffies - 1 - msecs_to_jiffies(BATADV_RESET_PROTECTION_MS);
   orig_node->bcast_seqno_reset = reset_time;
 
+  /* WAM: значения по умолчанию (будут перезаписаны TVLV) */
+  orig_node->node_priority = BATADV_NODE_PRIORITY_DEFAULT;
+  orig_node->duty_cycle = BATADV_DUTY_CYCLE_DEFAULT;
+  orig_node->power_class = BATADV_POWER_CLASS_DEFAULT;
+
 #ifdef CONFIG_BATMAN_ADV_MCAST
   orig_node->mcast_flags = BATADV_MCAST_WANT_NO_RTR4;
   orig_node->mcast_flags |= BATADV_MCAST_WANT_NO_RTR6;

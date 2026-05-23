@@ -115,6 +115,80 @@ static void batadv_v_ogm_start_timer(struct batadv_priv *bat_priv) {
 }
 
 /**
+ * batadv_node_weight_factor() - вычислить фактор веса узла
+ * @bat_priv: the bat priv with all the mesh interface information
+ *
+ * Вычисляет комбинированный вес узла на основе трёх параметров:
+ * priority, duty_cycle, power_class.
+ *
+ * Результат в тысячных долях:
+ *   1000 = нейтральный вес (×1.0)
+ *   >1000 = узел "дорогой" для транзита
+ *   <1000 = узел "премиум" для транзита
+ *
+ * Return: фактор веса в тысячных (1000 = нейтральный)
+ */
+static u32 batadv_node_weight_factor(struct batadv_priv *bat_priv) {
+  u32 priority = atomic_read(&bat_priv->node_priority);
+  u32 duty_cycle = atomic_read(&bat_priv->duty_cycle);
+  u32 power_class = atomic_read(&bat_priv->power_class);
+
+  /* priority_factor: 1-255 → (priority/128) в тысячных
+   *   1   → 7    (премиум: трафик идёт очень охотно)
+   *   128 → 1000 (нейтральный)
+   *   255 → 1992 (избегаемый)
+   */
+  u32 priority_factor = (priority * BATADV_WEIGHT_SCALE) / 128;
+
+  /* duty_factor: 100/duty_cycle в тысячных
+   *   100 → 1000 (всегда активен)
+   *   50  → 2000 (активен половину времени)
+   *   10  → 10000 (активен 10% времени)
+   */
+  if (duty_cycle == 0)
+    duty_cycle = 1; /* защита от деления на 0 */
+  u32 duty_factor = (100 * BATADV_WEIGHT_SCALE) / duty_cycle;
+
+  /* power_factor: power_class в тысячных
+   *   1 → 1000 (розетка)
+   *   2 → 2000 (батарея)
+   *   3 → 4000 (energy harvesting)
+   */
+  u32 power_factor = power_class * BATADV_WEIGHT_SCALE;
+
+  /* Все три перемножаются, результат в тысячных (делим на 10^6) */
+  u64 result = (u64)priority_factor * duty_factor * power_factor;
+  return (u32)(result / (BATADV_WEIGHT_SCALE * BATADV_WEIGHT_SCALE));
+}
+
+/**
+ * batadv_orig_node_weight_factor() - получить вес удалённого узла
+ * @orig_node: originator node
+ *
+ * Return: фактор веса в тысячных (1000 = нейтральный)
+ */
+static u32 batadv_orig_node_weight_factor(struct batadv_orig_node *orig_node) {
+  u32 priority = orig_node->node_priority;
+  u32 duty_cycle = orig_node->duty_cycle;
+  u32 power_class = orig_node->power_class;
+
+  /* Если не было TVLV — используем значения по умолчанию */
+  if (priority == 0)
+    priority = BATADV_NODE_PRIORITY_DEFAULT;
+  if (duty_cycle == 0)
+    duty_cycle = BATADV_DUTY_CYCLE_DEFAULT;
+  if (power_class == 0)
+    power_class = BATADV_POWER_CLASS_DEFAULT;
+
+  u32 priority_factor = (priority * BATADV_WEIGHT_SCALE) / 128;
+  u32 duty_factor = (100 * BATADV_WEIGHT_SCALE) / duty_cycle;
+  u32 power_factor = power_class * BATADV_WEIGHT_SCALE;
+
+  u64 result = (u64)priority_factor * duty_factor * power_factor;
+  return (u32)(result / (BATADV_WEIGHT_SCALE * BATADV_WEIGHT_SCALE));
+}
+
+/**
  * batadv_v_ogm_send_to_if() - send a batman ogm using a given interface
  * @skb: the OGM to send
  * @hard_iface: the interface to use to send the OGM
@@ -274,6 +348,17 @@ static void batadv_v_ogm_send_meshif(struct batadv_priv *bat_priv) {
    * appended as it may alter the tt tvlv container
    */
   batadv_tt_local_commit_changes(bat_priv);
+  /* +++ WAM: добавляем TVLV с весом узла +++ */
+  {
+    struct batadv_tvlv_node_weight weight_tvlv;
+
+    weight_tvlv.priority = (u8)atomic_read(&bat_priv->node_priority);
+    weight_tvlv.duty_cycle = (u8)atomic_read(&bat_priv->duty_cycle);
+    weight_tvlv.power_class = (u8)atomic_read(&bat_priv->power_class);
+
+    batadv_tvlv_container_register(bat_priv, BATADV_TVLV_NODE_WEIGHT, 1,
+                                   &weight_tvlv, sizeof(weight_tvlv));
+  }
   tvlv_len = batadv_tvlv_container_ogm_append(bat_priv, &ogm_buff,
                                               &ogm_buff_len, BATADV_OGM2_HLEN);
 
@@ -643,9 +728,12 @@ static int batadv_v_ogm_metric_update(struct batadv_priv *bat_priv,
       batadv_hardif_neigh_put(hardif_neigh);
     }
 
-    /* airtime пути = airtime из OGM + airtime линка (сложение!) */
-    // path_airtime = ntohl(ogm2->throughput) + link_airtime;
-    path_airtime = ntohl(ogm2->throughput);
+    /* +++ WAM: получаем вес узла-ОТПРАВИТЕЛЯ OGM +++ */
+    u32 node_weight = batadv_orig_node_weight_factor(orig_node);
+
+    /* airtime пути = airtime из OGM + airtime линка × вес узла-отправителя */
+    path_airtime = ntohl(ogm2->throughput) +
+                   (link_airtime * node_weight / BATADV_WEIGHT_SCALE);
 
     /* применяем штрафы */
     path_airtime = batadv_v_forward_penalty(bat_priv, if_incoming, if_outgoing,
@@ -794,6 +882,14 @@ static void batadv_v_ogm_process_per_outif(
   int seqno_age;
   bool forward;
 
+  /* только для новых OGM и default-интерфейса */
+  if (seqno_age > 0 && if_outgoing == BATADV_IF_DEFAULT) {
+    /* +++ WAM: обрабатываем TVLV с весом узла +++ */
+    batadv_tvlv_containers_process(bat_priv, BATADV_OGM2, orig_node, NULL,
+                                   (unsigned char *)(ogm2 + 1),
+                                   ntohs(ogm2->tvlv_len));
+  }
+
   /* first, update the metric with according sanity checks */
   seqno_age = batadv_v_ogm_metric_update(bat_priv, ogm2, orig_node, neigh_node,
                                          if_incoming, if_outgoing);
@@ -920,10 +1016,16 @@ static void batadv_v_ogm_process(const struct sk_buff *skb, int ogm_offset,
    * Это соответствует логике 802.11s: суммарная занятость эфира
    * на всём маршруте равна сумме занятостей на каждом хопе.
    */
+
+  /* AIRTIME с весом: получаем вес узла-отправителя */
+  u32 node_weight = batadv_orig_node_weight_factor(orig_node);
+
   link_airtime = hardif_neigh->bat_v.airtime_cost;
+  path_airtime =
+      ogm_airtime + (link_airtime * node_weight / BATADV_WEIGHT_SCALE);
 
   /* AIRTIME: сложение вместо min() */
-  path_airtime = ogm_airtime + link_airtime;
+  // path_airtime = ogm_airtime + link_airtime;
 
   /* защита от переполнения */
   if (path_airtime < ogm_airtime) /* overflow */
@@ -1045,6 +1147,38 @@ free_skb:
 }
 
 /**
+ * batadv_v_tvlv_node_weight_handler() - обработчик TVLV с весом узла
+ * @bat_priv: the bat priv
+ * @orig: originator node
+ * @flags: flags
+ * @tvlv_value: pointer to TVLV value
+ * @tvlv_value_len: length of TVLV value
+ */
+static void batadv_v_tvlv_node_weight_handler(struct batadv_priv *bat_priv,
+                                              struct batadv_orig_node *orig,
+                                              u8 flags, void *tvlv_value,
+                                              u16 tvlv_value_len) {
+  struct batadv_tvlv_node_weight *weight;
+
+  if (!orig)
+    return;
+
+  if (tvlv_value_len < sizeof(*weight))
+    return;
+
+  weight = (struct batadv_tvlv_node_weight *)tvlv_value;
+
+  orig->node_priority = weight->priority;
+  orig->duty_cycle = weight->duty_cycle;
+  orig->power_class = weight->power_class;
+
+  batadv_dbg(BATADV_DBG_BATMAN, bat_priv,
+             "TVLV NODE_WEIGHT from %pM: prio=%u duty=%u power=%u\n",
+             orig->orig, weight->priority, weight->duty_cycle,
+             weight->power_class);
+}
+
+/**
  * batadv_v_ogm_init() - initialise the OGM2 engine
  * @bat_priv: the bat priv with all the mesh interface information
  *
@@ -1077,6 +1211,17 @@ int batadv_v_ogm_init(struct batadv_priv *bat_priv) {
   INIT_DELAYED_WORK(&bat_priv->bat_v.ogm_wq, batadv_v_ogm_send);
 
   mutex_init(&bat_priv->bat_v.ogm_buff_mutex);
+
+  /* WAM: инициализация весов по умолчанию */
+  atomic_set(&bat_priv->node_priority, BATADV_NODE_PRIORITY_DEFAULT);
+  atomic_set(&bat_priv->duty_cycle, BATADV_DUTY_CYCLE_DEFAULT);
+  atomic_set(&bat_priv->power_class, BATADV_POWER_CLASS_DEFAULT);
+
+  batadv_tvlv_handler_register(bat_priv, batadv_v_tvlv_node_weight_handler,
+                               NULL, /* unicast handler */
+                               NULL, /* multicast handler */
+                               BATADV_TVLV_NODE_WEIGHT, 1, /* version */
+                               BATADV_TVLV_HANDLER_OGM_CIFNOTFND);
 
   pr_err("=== AIRTIME DEBUG: OGM init complete ===\n");
 
