@@ -677,7 +677,6 @@ static int batadv_v_ogm_metric_update(struct batadv_priv *bat_priv,
   struct batadv_neigh_ifinfo *neigh_ifinfo = NULL;
   bool protection_started = false;
   int ret = -EINVAL;
-  u32 path_throughput;
   s32 seq_diff;
 
   orig_ifinfo = batadv_orig_ifinfo_new(orig_node, if_outgoing);
@@ -718,7 +717,7 @@ static int batadv_v_ogm_metric_update(struct batadv_priv *bat_priv,
   /* +++ ВЫЧИСЛЕНИЕ AIRTIME-ПУТИ +++ */
   {
     // u32 link_airtime = BATADV_AIRTIME_MAX_VALUE;
-    // u32 path_airtime;
+    u32 path_airtime;
     // struct batadv_hardif_neigh_node *hardif_neigh;
 
     // /* получаем airtime-стоимость линка до соседа */
