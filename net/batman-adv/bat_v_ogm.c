@@ -717,27 +717,27 @@ static int batadv_v_ogm_metric_update(struct batadv_priv *bat_priv,
 
   /* +++ ВЫЧИСЛЕНИЕ AIRTIME-ПУТИ +++ */
   {
-    u32 link_airtime = BATADV_AIRTIME_MAX_VALUE;
-    u32 path_airtime;
-    struct batadv_hardif_neigh_node *hardif_neigh;
+    // u32 link_airtime = BATADV_AIRTIME_MAX_VALUE;
+    // u32 path_airtime;
+    // struct batadv_hardif_neigh_node *hardif_neigh;
 
-    /* получаем airtime-стоимость линка до соседа */
-    hardif_neigh = batadv_hardif_neigh_get(if_incoming, neigh_node->addr);
-    if (hardif_neigh) {
-      link_airtime = hardif_neigh->bat_v.airtime_cost;
-      batadv_hardif_neigh_put(hardif_neigh);
-    }
+    // /* получаем airtime-стоимость линка до соседа */
+    // hardif_neigh = batadv_hardif_neigh_get(if_incoming, neigh_node->addr);
+    // if (hardif_neigh) {
+    //   link_airtime = hardif_neigh->bat_v.airtime_cost;
+    //   batadv_hardif_neigh_put(hardif_neigh);
+    // }
 
     /* +++ WAM: получаем вес узла-ОТПРАВИТЕЛЯ OGM +++ */
-    u32 node_weight = batadv_orig_node_weight_factor(orig_node);
+    // u32 node_weight = batadv_orig_node_weight_factor(orig_node);
 
     /* airtime пути = airtime из OGM + airtime линка × вес узла-отправителя */
-    path_airtime = ntohl(ogm2->throughput) +
-                   (link_airtime * node_weight / BATADV_WEIGHT_SCALE);
+    // path_airtime = ntohl(ogm2->throughput) +
+    //                (link_airtime * node_weight / BATADV_WEIGHT_SCALE);
 
     /* применяем штрафы */
     path_airtime = batadv_v_forward_penalty(bat_priv, if_incoming, if_outgoing,
-                                            path_airtime);
+                                            ntohl(ogm2->throughput));
 
     pr_err("=== AIRTIME SAVE: path_before_penalty=%u, path_after_penalty=%u, "
            "if_in=%s, if_out=%s, same_iface=%d, full_duplex=%d ===\n",
@@ -897,12 +897,6 @@ static void batadv_v_ogm_process_per_outif(
   /* outdated sequence numbers are to be discarded */
   if (seqno_age < 0)
     return;
-
-  /* only unknown & newer OGMs contain TVLVs we are interested in */
-  if (seqno_age > 0 && if_outgoing == BATADV_IF_DEFAULT)
-    batadv_tvlv_containers_process(bat_priv, BATADV_OGM2, orig_node, NULL,
-                                   (unsigned char *)(ogm2 + 1),
-                                   ntohs(ogm2->tvlv_len));
 
   /* if the metric update went through, update routes if needed */
   forward = batadv_v_ogm_route_update(bat_priv, ethhdr, ogm2, orig_node,
