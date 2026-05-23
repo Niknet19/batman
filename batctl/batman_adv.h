@@ -473,9 +473,6 @@ enum batadv_nl_attrs {
    *  estimate the throughput by itself.
    */
   BATADV_ATTR_THROUGHPUT_OVERRIDE,
-  BATADV_ATTR_NODE_PRIORITY,
-  BATADV_ATTR_DUTY_CYCLE,
-  BATADV_ATTR_POWER_CLASS,
 
   /**
    * @BATADV_ATTR_MULTICAST_FANOUT: defines the maximum number of packet
@@ -483,6 +480,9 @@ enum batadv_nl_attrs {
    * Once this limit is exceeded distribution will fall back to broadcast.
    */
   BATADV_ATTR_MULTICAST_FANOUT,
+  BATADV_ATTR_NODE_PRIORITY,
+  BATADV_ATTR_DUTY_CYCLE,
+  BATADV_ATTR_POWER_CLASS,
 
   /* add attributes above here, update the policy in netlink.c */
 
