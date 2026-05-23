@@ -675,6 +675,8 @@ static int batadv_v_ogm_metric_update(struct batadv_priv *bat_priv,
                                       struct batadv_hard_iface *if_outgoing) {
   struct batadv_orig_ifinfo *orig_ifinfo;
   struct batadv_neigh_ifinfo *neigh_ifinfo = NULL;
+  u32 link_airtime, ogm_path, path_airtime, node_weight;
+  struct batadv_hardif_neigh_node *hardif_neigh;
   bool protection_started = false;
   int ret = -EINVAL;
   s32 seq_diff;
@@ -714,27 +716,39 @@ static int batadv_v_ogm_metric_update(struct batadv_priv *bat_priv,
   if (!neigh_ifinfo)
     goto out;
 
-  /* +++ ВЫЧИСЛЕНИЕ AIRTIME-ПУТИ С ВЕСОМ +++ */
   {
-    u32 path_airtime;
-    u32 node_weight = batadv_orig_node_weight_factor(orig_node);
+    /* 1. Получаем стоимость линка до соседа */
+    link_airtime = BATADV_AIRTIME_MAX_VALUE;
+    hardif_neigh = batadv_hardif_neigh_get(if_incoming, neigh_node->addr);
+    if (hardif_neigh) {
+      link_airtime = hardif_neigh->bat_v.airtime_cost;
+      batadv_hardif_neigh_put(hardif_neigh);
+    }
 
+    /* 2. OGM уже содержит путь от источника до отправителя */
+    ogm_path = ntohl(ogm2->throughput);
+
+    /* 3. Получаем вес узла-отправителя (из TVLV) */
+    node_weight = batadv_orig_node_weight_factor(orig_node);
+
+    /* 4. ПРАВИЛЬНО: только link_airtime умножается на вес */
+    path_airtime =
+        ogm_path + (link_airtime * node_weight / BATADV_WEIGHT_SCALE);
+
+    /* 5. Штрафы применяем ПОСЛЕ */
     path_airtime = batadv_v_forward_penalty(bat_priv, if_incoming, if_outgoing,
-                                            ntohl(ogm2->throughput));
+                                            path_airtime);
 
-    /* Применяем вес узла-отправителя */
-    path_airtime = path_airtime * node_weight / BATADV_WEIGHT_SCALE;
-
-    pr_err("=== AIRTIME SAVE: in=%s out=%s, ogm=%u, weight=%u (prio=%u duty=%u "
-           "power=%u), "
-           "path=%u ===\n",
-           if_incoming->net_dev->name,
-           if_outgoing == BATADV_IF_DEFAULT ? "default"
-                                            : if_outgoing->net_dev->name,
-           ntohl(ogm2->throughput), node_weight, orig_node->node_priority,
-           orig_node->duty_cycle, orig_node->power_class, path_airtime);
-
+    /* 6. Сохраняем */
     neigh_ifinfo->bat_v.airtime_cost = path_airtime;
+
+    pr_err("=== AIRTIME SAVE: ogm=%u, link=%u, weight=%u (prio=%u duty=%u "
+           "power=%u), "
+           "before_penalty=%u, final=%u ===\n",
+           ogm_path, link_airtime, node_weight, orig_node->node_priority,
+           orig_node->duty_cycle, orig_node->power_class,
+           ogm_path + (link_airtime * node_weight / BATADV_WEIGHT_SCALE),
+           path_airtime);
   }
 
   neigh_ifinfo->bat_v.last_seqno = ntohl(ogm2->seqno);
@@ -1000,19 +1014,20 @@ static void batadv_v_ogm_process(const struct sk_buff *skb, int ogm_offset,
                                  ntohs(ogm_packet->tvlv_len));
 
   /* AIRTIME: базовое сложение без веса (вес применится в metric_update) */
-  link_airtime = hardif_neigh->bat_v.airtime_cost;
-  path_airtime = ogm_airtime + link_airtime;
+  //   link_airtime = hardif_neigh->bat_v.airtime_cost;
+  //   path_airtime = ogm_airtime + link_airtime;
 
-  /* защита от переполнения */
-  if (path_airtime < ogm_airtime) /* overflow */
-    path_airtime = BATADV_AIRTIME_MAX_VALUE;
+  //   /* защита от переполнения */
+  //   if (path_airtime < ogm_airtime) /* overflow */
+  //     path_airtime = BATADV_AIRTIME_MAX_VALUE;
 
-  pr_err("=== AIRTIME OGM: ogm_from_src=%u, link_airtime=%u, NEW_path=%u ===\n",
-         ogm_airtime, link_airtime, path_airtime);
+  //   pr_err("=== AIRTIME OGM: ogm_from_src=%u, link_airtime=%u, NEW_path=%u
+  //   ===\n",
+  //          ogm_airtime, link_airtime, path_airtime);
 
   /* AIRTIME: записываем новую стоимость пути в пакет для дальнейшей
    * ретрансляции */
-  ogm_packet->throughput = htonl(path_airtime);
+  // ogm_packet->throughput = htonl(path_airtime);
 
   batadv_v_ogm_process_per_outif(bat_priv, ethhdr, ogm_packet, orig_node,
                                  neigh_node, if_incoming, BATADV_IF_DEFAULT);
