@@ -594,7 +594,6 @@ static void batadv_v_ogm_forward(struct batadv_priv *bat_priv,
   size_t packet_len;
   u16 tvlv_len;
 
-  /* only forward for specific interfaces, not for the default one. */
   if (if_outgoing == BATADV_IF_DEFAULT)
     goto out;
 
@@ -602,14 +601,10 @@ static void batadv_v_ogm_forward(struct batadv_priv *bat_priv,
   if (!orig_ifinfo)
     goto out;
 
-  /* acquire possibly updated router */
   router = batadv_orig_router_get(orig_node, if_outgoing);
-
-  /* strict rule: forward packets coming from the best next hop only */
   if (neigh_node != router)
     goto out;
 
-  /* don't forward the same seqno twice on one interface */
   if (orig_ifinfo->last_seqno_forwarded == ntohl(ogm_received->seqno))
     goto out;
 
@@ -625,8 +620,8 @@ static void batadv_v_ogm_forward(struct batadv_priv *bat_priv,
     goto out;
 
   tvlv_len = ntohs(ogm_received->tvlv_len);
-
   packet_len = BATADV_OGM2_HLEN + tvlv_len;
+
   skb = netdev_alloc_skb_ip_align(if_outgoing->net_dev, ETH_HLEN + packet_len);
   if (!skb)
     goto out;
@@ -634,15 +629,13 @@ static void batadv_v_ogm_forward(struct batadv_priv *bat_priv,
   skb_reserve(skb, ETH_HLEN);
   skb_buff = skb_put_data(skb, ogm_received, packet_len);
 
-  /* apply forward penalty */
   ogm_forward = (struct batadv_ogm2_packet *)skb_buff;
   ogm_forward->throughput = htonl(neigh_ifinfo->bat_v.airtime_cost);
   ogm_forward->ttl--;
 
-  /* +++ WAM: применяем СВОЙ вес узла при ретрансляции +++ */
+  /* +++ WAM: применяем СВОЙ вес узла при форвардинге (только здесь!) +++ */
   {
     u32 self_weight = batadv_node_weight_factor(bat_priv);
-
     if (self_weight != BATADV_WEIGHT_SCALE) {
       u32 current_path = ntohl(ogm_forward->throughput);
       u64 weighted_path = (u64)current_path * self_weight;
@@ -652,24 +645,22 @@ static void batadv_v_ogm_forward(struct batadv_priv *bat_priv,
       } else {
         current_path = (u32)(weighted_path / BATADV_WEIGHT_SCALE);
         if (current_path == 0)
-          current_path = 1; /* минимальная стоимость */
+          current_path = 1;
       }
-
       ogm_forward->throughput = htonl(current_path);
 
-      batadv_dbg(
-          BATADV_DBG_BATMAN, bat_priv,
-          "Forward with self-weight: path=%u weight=%u weighted_path=%u\n",
-          ntohl(neigh_ifinfo->bat_v.airtime_cost), self_weight, current_path);
+      batadv_dbg(BATADV_DBG_BATMAN, bat_priv,
+                 "Forward with self-weight: base=%u weight=%u → weighted=%u\n",
+                 ntohl(neigh_ifinfo->bat_v.airtime_cost), self_weight,
+                 current_path);
     }
   }
   /* --- конец WAM --- */
 
-  batadv_dbg(
-      BATADV_DBG_BATMAN, bat_priv,
-      "Forwarding OGM2 packet on %s: throughput %u, ttl %u, received via %s\n",
-      if_outgoing->net_dev->name, ntohl(ogm_forward->throughput),
-      ogm_forward->ttl, if_incoming->net_dev->name);
+  batadv_dbg(BATADV_DBG_BATMAN, bat_priv,
+             "Forwarding OGM2 on %s: airtime %u, ttl %u\n",
+             if_outgoing->net_dev->name, ntohl(ogm_forward->throughput),
+             ogm_forward->ttl);
 
   batadv_v_ogm_queue_on_if(skb, if_outgoing);
 
@@ -717,11 +708,6 @@ static int batadv_v_ogm_metric_update(struct batadv_priv *bat_priv,
       batadv_window_protected(bat_priv, seq_diff, BATADV_OGM_MAX_AGE,
                               &orig_ifinfo->batman_seqno_reset,
                               &protection_started)) {
-    batadv_dbg(BATADV_DBG_BATMAN, bat_priv,
-               "Drop packet: packet within window protection time from %pM\n",
-               ogm2->orig);
-    batadv_dbg(BATADV_DBG_BATMAN, bat_priv, "Last reset: %ld, %ld\n",
-               orig_ifinfo->batman_seqno_reset, jiffies);
     goto out;
   }
 
@@ -730,7 +716,6 @@ static int batadv_v_ogm_metric_update(struct batadv_priv *bat_priv,
 
   neigh_node->last_seen = jiffies;
   orig_node->last_seen = jiffies;
-
   orig_ifinfo->last_real_seqno = ntohl(ogm2->seqno);
   orig_ifinfo->last_ttl = ogm2->ttl;
 
@@ -738,64 +723,34 @@ static int batadv_v_ogm_metric_update(struct batadv_priv *bat_priv,
   if (!neigh_ifinfo)
     goto out;
 
-  {
-    link_airtime = BATADV_AIRTIME_MAX_VALUE;
-    hardif_neigh = batadv_hardif_neigh_get(if_incoming, neigh_node->addr);
-    if (hardif_neigh) {
-      link_airtime = hardif_neigh->bat_v.airtime_cost;
-      batadv_hardif_neigh_put(hardif_neigh);
-    }
-
-    ogm_path = ntohl(ogm2->throughput);
-
-    /* +++ WAM: применяем вес узла-источника к стоимости линка +++ */
-    {
-      u32 weight = batadv_orig_node_weight_factor(orig_node);
-
-      if (weight != BATADV_WEIGHT_SCALE) {
-        u64 weighted_link = (u64)link_airtime * weight;
-
-        if (weighted_link > U32_MAX) {
-          link_airtime = BATADV_AIRTIME_MAX_VALUE;
-        } else {
-          link_airtime = (u32)(weighted_link / BATADV_WEIGHT_SCALE);
-          if (link_airtime == 0)
-            link_airtime = 1; /* минимальная стоимость */
-        }
-
-        batadv_dbg(BATADV_DBG_BATMAN, bat_priv,
-                   "Node weight on link: orig=%pM raw_link=%u weight=%u "
-                   "weighted_link=%u\n",
-                   orig_node->orig,
-                   hardif_neigh ? hardif_neigh->bat_v.airtime_cost : 0, weight,
-                   link_airtime);
-      }
-    }
-    /* --- конец WAM --- */
-
-    path_airtime = ogm_path + link_airtime;
-
-    /* Защита от переполнения */
-    if (path_airtime < ogm_path) /* overflow */
-      path_airtime = BATADV_AIRTIME_MAX_VALUE;
-
-    path_airtime = batadv_v_forward_penalty(bat_priv, if_incoming, if_outgoing,
-                                            path_airtime);
-
-    neigh_ifinfo->bat_v.airtime_cost = path_airtime;
+  /* === ЧИСТЫЙ РАСЧЁТ БЕЗ ВЕСА === */
+  link_airtime = BATADV_AIRTIME_MAX_VALUE;
+  hardif_neigh = batadv_hardif_neigh_get(if_incoming, neigh_node->addr);
+  if (hardif_neigh) {
+    link_airtime = hardif_neigh->bat_v.airtime_cost;
+    batadv_hardif_neigh_put(hardif_neigh);
   }
+
+  ogm_path = ntohl(ogm2->throughput);
+
+  path_airtime = ogm_path + link_airtime;
+  if (path_airtime < ogm_path) /* overflow */
+    path_airtime = BATADV_AIRTIME_MAX_VALUE;
+
+  path_airtime = batadv_v_forward_penalty(bat_priv, if_incoming, if_outgoing,
+                                          path_airtime);
+
+  neigh_ifinfo->bat_v.airtime_cost = path_airtime;
+  /* ================================= */
 
   neigh_ifinfo->bat_v.last_seqno = ntohl(ogm2->seqno);
   neigh_ifinfo->last_ttl = ogm2->ttl;
 
-  if (seq_diff > 0 || protection_started)
-    ret = 1;
-  else
-    ret = 0;
+  ret = (seq_diff > 0 || protection_started) ? 1 : 0;
+
 out:
   batadv_orig_ifinfo_put(orig_ifinfo);
   batadv_neigh_ifinfo_put(neigh_ifinfo);
-
   return ret;
 }
 
