@@ -639,6 +639,32 @@ static void batadv_v_ogm_forward(struct batadv_priv *bat_priv,
   ogm_forward->throughput = htonl(neigh_ifinfo->bat_v.airtime_cost);
   ogm_forward->ttl--;
 
+  /* +++ WAM: применяем СВОЙ вес узла при ретрансляции +++ */
+  {
+    u32 self_weight = batadv_node_weight_factor(bat_priv);
+
+    if (self_weight != BATADV_WEIGHT_SCALE) {
+      u32 current_path = ntohl(ogm_forward->throughput);
+      u64 weighted_path = (u64)current_path * self_weight;
+
+      if (weighted_path > U32_MAX) {
+        current_path = BATADV_AIRTIME_MAX_VALUE;
+      } else {
+        current_path = (u32)(weighted_path / BATADV_WEIGHT_SCALE);
+        if (current_path == 0)
+          current_path = 1; /* минимальная стоимость */
+      }
+
+      ogm_forward->throughput = htonl(current_path);
+
+      batadv_dbg(
+          BATADV_DBG_BATMAN, bat_priv,
+          "Forward with self-weight: path=%u weight=%u weighted_path=%u\n",
+          ntohl(neigh_ifinfo->bat_v.airtime_cost), self_weight, current_path);
+    }
+  }
+  /* --- конец WAM --- */
+
   batadv_dbg(
       BATADV_DBG_BATMAN, bat_priv,
       "Forwarding OGM2 packet on %s: throughput %u, ttl %u, received via %s\n",
@@ -675,7 +701,7 @@ static int batadv_v_ogm_metric_update(struct batadv_priv *bat_priv,
                                       struct batadv_hard_iface *if_outgoing) {
   struct batadv_orig_ifinfo *orig_ifinfo;
   struct batadv_neigh_ifinfo *neigh_ifinfo = NULL;
-  u32 link_airtime, ogm_path, path_airtime, node_weight;
+  u32 link_airtime, ogm_path, path_airtime;
   struct batadv_hardif_neigh_node *hardif_neigh;
   bool protection_started = false;
   int ret = -EINVAL;
@@ -699,14 +725,10 @@ static int batadv_v_ogm_metric_update(struct batadv_priv *bat_priv,
     goto out;
   }
 
-  /* drop packets with old seqnos, however accept the first packet after
-   * a host has been rebooted.
-   */
   if (seq_diff < 0 && !protection_started)
     goto out;
 
   neigh_node->last_seen = jiffies;
-
   orig_node->last_seen = jiffies;
 
   orig_ifinfo->last_real_seqno = ntohl(ogm2->seqno);
@@ -717,7 +739,6 @@ static int batadv_v_ogm_metric_update(struct batadv_priv *bat_priv,
     goto out;
 
   {
-    /* 1. Получаем стоимость линка до соседа */
     link_airtime = BATADV_AIRTIME_MAX_VALUE;
     hardif_neigh = batadv_hardif_neigh_get(if_incoming, neigh_node->addr);
     if (hardif_neigh) {
@@ -725,30 +746,43 @@ static int batadv_v_ogm_metric_update(struct batadv_priv *bat_priv,
       batadv_hardif_neigh_put(hardif_neigh);
     }
 
-    /* 2. OGM уже содержит путь от источника до отправителя */
     ogm_path = ntohl(ogm2->throughput);
 
-    /* 3. Получаем вес узла-отправителя (из TVLV) */
-    node_weight = batadv_orig_node_weight_factor(orig_node);
+    /* +++ WAM: применяем вес узла-источника к стоимости линка +++ */
+    {
+      u32 weight = batadv_orig_node_weight_factor(orig_node);
 
-    /* 4. ПРАВИЛЬНО: только link_airtime умножается на вес */
-    path_airtime =
-        ogm_path + (link_airtime * node_weight / BATADV_WEIGHT_SCALE);
+      if (weight != BATADV_WEIGHT_SCALE) {
+        u64 weighted_link = (u64)link_airtime * weight;
 
-    /* 5. Штрафы применяем ПОСЛЕ */
+        if (weighted_link > U32_MAX) {
+          link_airtime = BATADV_AIRTIME_MAX_VALUE;
+        } else {
+          link_airtime = (u32)(weighted_link / BATADV_WEIGHT_SCALE);
+          if (link_airtime == 0)
+            link_airtime = 1; /* минимальная стоимость */
+        }
+
+        batadv_dbg(BATADV_DBG_BATMAN, bat_priv,
+                   "Node weight on link: orig=%pM raw_link=%u weight=%u "
+                   "weighted_link=%u\n",
+                   orig_node->orig,
+                   hardif_neigh ? hardif_neigh->bat_v.airtime_cost : 0, weight,
+                   link_airtime);
+      }
+    }
+    /* --- конец WAM --- */
+
+    path_airtime = ogm_path + link_airtime;
+
+    /* Защита от переполнения */
+    if (path_airtime < ogm_path) /* overflow */
+      path_airtime = BATADV_AIRTIME_MAX_VALUE;
+
     path_airtime = batadv_v_forward_penalty(bat_priv, if_incoming, if_outgoing,
                                             path_airtime);
 
-    /* 6. Сохраняем */
     neigh_ifinfo->bat_v.airtime_cost = path_airtime;
-
-    pr_err("=== AIRTIME SAVE: ogm=%u, link=%u, weight=%u (prio=%u duty=%u "
-           "power=%u), "
-           "before_penalty=%u, final=%u ===\n",
-           ogm_path, link_airtime, node_weight, orig_node->node_priority,
-           orig_node->duty_cycle, orig_node->power_class,
-           ogm_path + (link_airtime * node_weight / BATADV_WEIGHT_SCALE),
-           path_airtime);
   }
 
   neigh_ifinfo->bat_v.last_seqno = ntohl(ogm2->seqno);
